@@ -175,7 +175,6 @@ async function main() {
 
   // ── Graceful shutdown handler ──────────────────────────────────────────────
   const shutdown = async (code = 0) => {
-    logger.info('\nShutting down...');
     try { await agent.shutdown(); } catch {}
     process.exit(code);
   };
