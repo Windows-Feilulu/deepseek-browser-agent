@@ -101,14 +101,14 @@ const TOOLS = {
         const lines = content.split('\n');
         const s = Math.max(0, (start_line || 1) - 1);
         const e = end_line != null ? end_line : lines.length;
-        content = lines.slice(s, e).map((l, i) => `${s + i + 1}: ${l}`).join('\n');
+        content = lines.slice(s, e).map((l, i) => `${s + i + 1}:${l}`).join('\n');
         return `[${filePath} | lines ${s + 1}–${e}]\n${truncate(content)}`;
       }
 
       // Add line numbers for large files to help the AI reference lines
       const lineCount = content.split('\n').length;
       if (lineCount <= 300) {
-        const numbered = content.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n');
+        const numbered = content.split('\n').map((l, i) => `${i + 1}:${l}`).join('\n');
         return `[${filePath} | ${lineCount} lines]\n${numbered}`;
       }
       return `[${filePath} | ${lineCount} lines — use start_line/end_line to read sections]\n${truncate(content)}`;

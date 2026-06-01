@@ -115,6 +115,7 @@ async function createBackupWithMetadata(filePath, operation) {
 
 /**
  * Create a backup of user input (task content) for the current session
+ * Saves the task directly in backup_manifest.json instead of creating separate files
  * @param {string} taskContent - The user's task description
  * @returns {Promise<object>} Backup metadata
  */
@@ -124,27 +125,8 @@ async function backupUserPrompt(taskContent) {
   }
   
   const backupDir = getBackupDir();
-  const userInputsDir = path.join(backupDir, 'user_inputs');
-  fs.mkdirSync(userInputsDir, { recursive: true });
+  fs.mkdirSync(backupDir, { recursive: true });
   
-  const timestamp = Date.now();
-  const dateStr = new Date(timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const backupFileName = `task_${dateStr}_${timestamp}.txt`;
-  const backupPath = path.join(userInputsDir, backupFileName);
-  
-  // Write the task content with metadata header
-  const content = [
-    `Task Backup - ${new Date(timestamp).toISOString()}`,
-    `Session ID: ${currentSessionId || 'unknown'}`,
-    '─'.repeat(60),
-    taskContent,
-    '─'.repeat(60),
-    `Backup created at: ${new Date(timestamp).toLocaleString()}`,
-  ].join('\n');
-  
-  fs.writeFileSync(backupPath, content, 'utf8');
-  
-  // Update manifest with user prompt entry
   const manifestPath = path.join(backupDir, 'backup_manifest.json');
   let manifest = [];
   if (fs.existsSync(manifestPath)) {
@@ -155,14 +137,30 @@ async function backupUserPrompt(taskContent) {
     }
   }
   
+  // Check if user_prompt already exists in manifest (only one per session)
+  const existingUserPrompt = manifest.find(entry => entry.type === 'user_prompt');
+  if (existingUserPrompt) {
+    // Update existing entry
+    existingUserPrompt.timestamp = Date.now();
+    existingUserPrompt.taskContent = taskContent;
+    existingUserPrompt.taskLength = taskContent.length;
+    existingUserPrompt.updatedAt = new Date().toISOString();
+    
+    const metadata = existingUserPrompt;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    return metadata;
+  }
+  
+  // Create new user prompt entry
+  const timestamp = Date.now();
   const metadata = {
     timestamp,
     type: 'user_prompt',
     operation: 'backup_user_prompt',
-    filePath: backupPath,
     sessionId: currentSessionId,
+    taskContent: taskContent,  // Store the full task content directly
     taskLength: taskContent.length,
-    taskPreview: taskContent.slice(0, 200) + (taskContent.length > 200 ? '...' : '')
+    createdAt: new Date(timestamp).toISOString()
   };
   
   manifest.push(metadata);
