@@ -7,10 +7,39 @@ const { execSync }  = require('child_process');
 const http          = require('http');
 const https         = require('https');
 const config        = require('./config');
+const backup        = require('./backup');
 
 // ─────────────────────────────────────────────
 //  Helpers
 // ─────────────────────────────────────────────
+
+/** Convert any line ending to LF (\n) */
+function toLF(str) {
+  if (!str) return '';
+  return String(str).replace(/\r\n|\r/g, '\n');
+}
+
+/** Convert any line ending to CRLF (\r\n) */
+function toCRLF(str) {
+  if (!str) return '';
+  // First normalize to LF, then replace with CRLF
+  return toLF(str).replace(/\n/g, '\r\n');
+}
+
+/** Read a file and return its content with LF line endings */
+function readFileNormalized(filePath) {
+  return toLF(fs.readFileSync(filePath, 'utf8'));
+}
+
+/** Write content to file with CRLF line endings */
+function writeFileNormalized(filePath, content) {
+  fs.writeFileSync(filePath, toCRLF(content), 'utf8');
+}
+
+/** Append content to file with CRLF line endings */
+function appendFileNormalized(filePath, content) {
+  fs.appendFileSync(filePath, toCRLF(content), 'utf8');
+}
 
 /** Truncate long strings so they don't blow up the context window */
 function truncate(str, max = config.MAX_OUTPUT_LENGTH) {
@@ -39,6 +68,13 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
+/** Escape a string for use inside a PowerShell single-quoted argument */
+function escapePS(str) {
+  if (typeof str !== 'string') return String(str);
+  // Replace single quotes with two single quotes (PowerShell escape)
+  return str.replace(/'/g, "''");
+}
+
 // ─────────────────────────────────────────────
 //  Tool definitions
 // ─────────────────────────────────────────────
@@ -58,7 +94,8 @@ const TOOLS = {
       if (!fs.existsSync(abs))       throw new Error(`File not found: ${filePath}`);
       if (fs.statSync(abs).isDirectory()) throw new Error(`${filePath} is a directory`);
 
-      let content = fs.readFileSync(abs, 'utf8');
+      // Read with normalized LF line endings
+      let content = readFileNormalized(abs);
 
       if (start_line != null || end_line != null) {
         const lines = content.split('\n');
@@ -87,10 +124,17 @@ const TOOLS = {
     },
     async execute({ path: filePath, content }) {
       const abs = resolve(filePath);
+      // Create backup before modifying
+      try {
+        await backup.createBackupWithMetadata(abs, 'write_file');
+      } catch (err) {
+        // Log but don't fail if backup fails
+        console.error(`Backup failed for ${filePath}:`, err);
+      }
       fs.mkdirSync(path.dirname(abs), { recursive: true });
-      fs.writeFileSync(abs, content, 'utf8');
-      const lineCount = content.split('\n').length;
-      return `✓ Wrote ${formatBytes(Buffer.byteLength(content, 'utf8'))} (${lineCount} lines) → ${filePath}`;
+      writeFileNormalized(abs, content);
+      const lineCount = toLF(content).split('\n').length;
+      return `✓ Wrote ${formatBytes(Buffer.byteLength(toCRLF(content), 'utf8'))} (${lineCount} lines) → ${filePath}`;
     },
   },
 
@@ -103,9 +147,16 @@ const TOOLS = {
     },
     async execute({ path: filePath, content }) {
       const abs = resolve(filePath);
+      // Create backup before modifying (if file exists)
+      try {
+        await backup.createBackupWithMetadata(abs, 'append_to_file');
+      } catch (err) {
+        // Log but don't fail if backup fails
+        console.error(`Backup failed for ${filePath}:`, err);
+      }
       fs.mkdirSync(path.dirname(abs), { recursive: true });
-      fs.appendFileSync(abs, content, 'utf8');
-      return `✓ Appended ${formatBytes(Buffer.byteLength(content, 'utf8'))} to ${filePath}`;
+      appendFileNormalized(abs, content);
+      return `✓ Appended ${formatBytes(Buffer.byteLength(toCRLF(content), 'utf8'))} to ${filePath}`;
     },
   },
 
@@ -120,28 +171,48 @@ const TOOLS = {
       all_occurrences: { type: 'boolean', required: false, description: 'Replace all occurrences (default: true)' },
     },
     async execute({ path: filePath, find, replace, use_regex = false, all_occurrences = true }) {
-      const abs     = resolve(filePath);
-      let   content = fs.readFileSync(abs, 'utf8');
+      const abs = resolve(filePath);
+      // Create backup before modifying
+      try {
+        await backup.createBackupWithMetadata(abs, 'replace_in_file');
+      } catch (err) {
+        // Log but don't fail if backup fails
+        console.error(`Backup failed for ${filePath}:`, err);
+      }
+      // Read current content with LF line endings
+      let content = readFileNormalized(abs);
       const original = content;
 
+      // Normalize find and replace strings to LF so they match the LF content
+      const normalizedFind = toLF(find);
+      const normalizedReplace = toLF(replace);
+
       if (use_regex) {
-        const re = new RegExp(find, all_occurrences ? 'g' : '');
-        content = content.replace(re, replace);
+        const re = new RegExp(normalizedFind, all_occurrences ? 'g' : '');
+        content = content.replace(re, normalizedReplace);
       } else if (all_occurrences) {
-        content = content.split(find).join(replace);
+        content = content.split(normalizedFind).join(normalizedReplace);
       } else {
-        content = content.replace(find, replace);
+        content = content.replace(normalizedFind, normalizedReplace);
       }
 
       if (content === original) {
         return `⚠ No matches found for "${find}" in ${filePath}`;
       }
 
-      const count = (original.match(
-        new RegExp(use_regex ? find : find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
-      ) || []).length;
+      // Count occurrences (using normalizedFind)
+      let count;
+      if (use_regex) {
+        const re = new RegExp(normalizedFind, 'g');
+        count = (original.match(re) || []).length;
+      } else {
+        const escapedFind = normalizedFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(escapedFind, 'g');
+        count = (original.match(re) || []).length;
+      }
 
-      fs.writeFileSync(abs, content, 'utf8');
+      // Write back with CRLF line endings
+      writeFileNormalized(abs, content);
       return `✓ Replaced ${count} occurrence(s) of "${find}" in ${filePath}`;
     },
   },
@@ -155,6 +226,13 @@ const TOOLS = {
     async execute({ path: filePath }) {
       const abs = resolve(filePath);
       if (!fs.existsSync(abs)) throw new Error(`File not found: ${filePath}`);
+      // Create backup before deletion
+      try {
+        await backup.createBackupWithMetadata(abs, 'delete_file');
+      } catch (err) {
+        // Log but don't fail if backup fails
+        console.error(`Backup failed for ${filePath}:`, err);
+      }
       fs.unlinkSync(abs);
       return `✓ Deleted ${filePath}`;
     },
@@ -174,17 +252,24 @@ const TOOLS = {
       if (!fs.statSync(abs).isDirectory()) throw new Error(`${dirPath} is not a directory`);
 
       if (recursive) {
-        const excludes = '--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=.next';
-        const hidden   = show_hidden ? '' : "! -name '.*'";
-        const cmd      = `find "${abs}" ${hidden} -not -path "*/node_modules/*" -not -path "*/.git/*" | sort | head -300`;
-        const out      = execSync(cmd, { encoding: 'utf8' }).trim();
+        // Use PowerShell Get-ChildItem with recursion, filtering out common noise folders
+        const hiddenFilter = show_hidden ? '' : '-Force'; // -Force includes hidden files; if not show_hidden we need to filter later
+        // Build filter regex for excluded directories
+        const excludePattern = 'node_modules|\\.git|dist';
+        // PowerShell command: get all files/dirs recursively, exclude unwanted folders, sort by fullname, take first 300
+        let psCmd = `Get-ChildItem -Path '${escapePS(abs)}' -Recurse`;
+        if (!show_hidden) {
+          psCmd += ` | Where-Object { $_.Name -notlike '.*' }`;
+        }
+        psCmd += ` | Where-Object { $_.FullName -notmatch '${excludePattern}' }`;
+        psCmd += ` | Sort-Object FullName | Select-Object -First 300 | ForEach-Object { $_.FullName }`;
+        const out = execSync(`powershell.exe -NoProfile -Command "${psCmd}"`, { encoding: 'utf8' }).trim();
         return out || '(empty)';
       }
 
       const entries = fs.readdirSync(abs, { withFileTypes: true });
       const visible = show_hidden ? entries : entries.filter(e => !e.name.startsWith('.'));
       visible.sort((a, b) => {
-        // Directories first, then alphabetical
         if (a.isDirectory() && !b.isDirectory()) return -1;
         if (!a.isDirectory() && b.isDirectory()) return 1;
         return a.name.localeCompare(b.name);
@@ -275,7 +360,7 @@ const TOOLS = {
         permissions : `0${(stat.mode & 0o777).toString(8)}`,
       };
       if (stat.isFile()) {
-        const content = fs.readFileSync(abs, 'utf8');
+        const content = readFileNormalized(abs);
         info.lines = content.split('\n').length;
         info.encoding = 'utf-8';
       }
@@ -328,11 +413,19 @@ const TOOLS = {
     },
     async execute({ pattern, directory = '.', exclude }) {
       const dir = resolve(directory);
-      let cmd = `find "${dir}" -name "${pattern}" -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*"`;
-      if (exclude) cmd += ` -not -path "*${exclude}*"`;
-      cmd += ' | sort | head -100';
-
-      const result = execSync(cmd, { encoding: 'utf8', cwd: config.WORKING_DIR }).trim();
+      let excludePattern = 'node_modules|\\.git|dist';
+      if (exclude) {
+        excludePattern += `|${escapePS(exclude)}`;
+      }
+      // Use PowerShell: Get-ChildItem -Recurse -Filter, then filter out excluded folders
+      const psCmd = `Get-ChildItem -Path '${escapePS(dir)}' -Recurse -Filter '${escapePS(pattern)}' -File | Where-Object { $_.FullName -notmatch '${excludePattern}' } | Sort-Object FullName | Select-Object -First 100 | ForEach-Object { $_.FullName }`;
+      let result;
+      try {
+        result = execSync(`powershell.exe -NoProfile -Command "${psCmd}"`, { encoding: 'utf8' }).trim();
+      } catch (err) {
+        if (err.status === 1) return `No files matching "${pattern}" in ${directory}`;
+        throw err;
+      }
       return result || `No files matching "${pattern}" in ${directory}`;
     },
   },
@@ -348,19 +441,139 @@ const TOOLS = {
       context_lines : { type: 'number',  required: false, description: 'Lines of context around each match (default: 2)' },
     },
     async execute({ pattern, directory = '.', file_pattern, case_sensitive = false, context_lines = 2 }) {
-      const dir     = resolve(directory);
-      const flags   = case_sensitive ? '' : '-i';
-      const include = file_pattern ? `--include="${file_pattern}"` : '';
-      const ctx     = context_lines > 0 ? `-C ${context_lines}` : '';
-      const cmd     = `grep -rn ${flags} ${ctx} ${include} "${pattern}" "${dir}" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist 2>/dev/null | head -150`;
-
+      const dir = resolve(directory);
+      if (!fs.existsSync(dir)) throw new Error(`Directory not found: ${directory}`);
+      
+      // 构建正则表达式
+      let regex;
+      const flags = case_sensitive ? '' : 'i';
       try {
-        const result = execSync(cmd, { encoding: 'utf8' }).trim();
-        return truncate(result) || `No matches found for: ${pattern}`;
-      } catch (err) {
-        if (err.status === 1) return `No matches found for: ${pattern}`;
-        throw err;
+        // 尝试作为正则表达式解析
+        regex = new RegExp(pattern, flags);
+      } catch {
+        // 如果不是有效正则，转义特殊字符后作为普通字符串匹配
+        const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        regex = new RegExp(escaped, flags);
       }
+      
+      // 文件模式匹配（glob 转正则）
+      let fileMatcher = null;
+      if (file_pattern) {
+        const globToRegex = (glob) => {
+          const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                            .replace(/\*/g, '.*')
+                            .replace(/\?/g, '.');
+          return new RegExp(`^${escaped}$`, 'i');
+        };
+        fileMatcher = globToRegex(file_pattern);
+      }
+      
+      // 排除目录（正则匹配目录名或路径片段）
+      const excludeDirs = /node_modules|build|debug|release|\.git|dist|__pycache__|backups|venv|\.idea|\.vscode/;
+      
+      const results = [];
+      const MAX_RESULTS = 150;
+      const MAX_FILE_SIZE = 5 * 1024 * 1024; // 跳过超过 5MB 的文件
+      
+      // 递归遍历目录
+      function walk(currentDir) {
+        if (results.length >= MAX_RESULTS) return;
+        let entries;
+        try {
+          entries = fs.readdirSync(currentDir, { withFileTypes: true });
+        } catch {
+          return; // 忽略权限错误
+        }
+        
+        for (const entry of entries) {
+          if (results.length >= MAX_RESULTS) break;
+          const fullPath = path.join(currentDir, entry.name);
+          
+          if (entry.isDirectory()) {
+            // 跳过排除的目录
+            if (excludeDirs.test(entry.name) || excludeDirs.test(fullPath)) continue;
+            walk(fullPath);
+          } else if (entry.isFile()) {
+            // 文件模式过滤
+            if (fileMatcher && !fileMatcher.test(entry.name)) continue;
+            
+            // 跳过超大文件
+            let stats;
+            try {
+              stats = fs.statSync(fullPath);
+              if (stats.size > MAX_FILE_SIZE) continue;
+            } catch { continue; }
+            
+            // 检测二进制文件（读取前 1KB，若含 null 字节则跳过）
+            let isBinary = false;
+            try {
+              const fd = fs.openSync(fullPath, 'r');
+              const buffer = Buffer.alloc(1024);
+              const bytesRead = fs.readSync(fd, buffer, 0, 1024, 0);
+              fs.closeSync(fd);
+              if (buffer.slice(0, bytesRead).includes(0)) isBinary = true;
+            } catch { continue; }
+            if (isBinary) continue;
+            
+            // 读取文件内容（UTF-8）
+            let content;
+            try {
+              content = fs.readFileSync(fullPath, 'utf8');
+            } catch {
+              continue; // 编码问题跳过
+            }
+            
+            const lines = content.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+              if (results.length >= MAX_RESULTS) break;
+              if (regex.test(lines[i])) {
+                // 提取上下文行
+                const start = Math.max(0, i - context_lines);
+                const end = Math.min(lines.length - 1, i + context_lines);
+                const contextParts = [];
+                for (let j = start; j <= end; j++) {
+                  const prefix = (j === i) ? '>>>' : '   ';
+                  contextParts.push(`${prefix} ${j+1}: ${lines[j]}`);
+                }
+                const relativePath = path.relative(dir, fullPath);
+                results.push(`[${relativePath}:${i+1}]\n${contextParts.join('\n')}\n`);
+              }
+            }
+          }
+        }
+      }
+      
+      walk(dir);
+      
+      if (results.length === 0) {
+        return `No matches found for: ${pattern}`;
+      }
+      return truncate(results.join('\n').trim());
+    },
+  },
+
+  // ── Ask User ──────────────────────────────────────────────────────────────
+  ask_user: {
+    description: 'Ask the user a question and wait for their response. Useful when you need clarification, approval, or suggestions from the user.',
+    parameters: {
+      question: { type: 'string', required: true, description: 'The question to ask the user' },
+      options: { type: 'array', required: false, description: 'Optional list of options for the user to choose from (e.g., ["Yes", "No", "Cancel"])' },
+    },
+    async execute({ question, options }) {
+      // This tool will be intercepted by the agent framework
+      // The framework will display the question to the user and wait for input
+      // The response will be passed back through the tool result
+      const prompt = options && options.length > 0
+        ? `${question}\n\nOptions: ${options.map((opt, i) => `${i+1}. ${opt}`).join(' | ')}`
+        : question;
+      
+      // Return a special marker that the framework will recognize
+      // The actual implementation will be in the agent's main loop
+      return {
+        __ask_user: true,
+        question: prompt,
+        options: options || []
+      };
     },
   },
 
@@ -381,7 +594,6 @@ const TOOLS = {
         };
 
         const req = client.get(url, options, (res) => {
-          // Follow redirects
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             return TOOLS.read_url.execute({ url: res.headers.location }).then(resolve_p).catch(reject);
           }
@@ -389,7 +601,6 @@ const TOOLS = {
           let data = '';
           res.on('data', chunk => { data += chunk; });
           res.on('end', () => {
-            // Strip HTML tags for readability
             const text = data
               .replace(/<script[\s\S]*?<\/script>/gi, '')
               .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -421,8 +632,15 @@ const TOOLS = {
       const results = [];
       for (const { path: filePath, content } of files) {
         const abs = resolve(filePath);
+        // Create backup before writing
+        try {
+          await backup.createBackupWithMetadata(abs, 'write_files');
+        } catch (err) {
+          // Log but don't fail if backup fails
+          console.error(`Backup failed for ${filePath}:`, err);
+        }
         fs.mkdirSync(path.dirname(abs), { recursive: true });
-        fs.writeFileSync(abs, content, 'utf8');
+        writeFileNormalized(abs, content);
         results.push(`✓ ${filePath}`);
       }
       return `Wrote ${results.length} files:\n${results.join('\n')}`;

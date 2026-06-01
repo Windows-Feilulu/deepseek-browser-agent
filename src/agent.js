@@ -11,6 +11,7 @@ const { executeTool }              = require('./tools');
 const { parseResponse,
         formatToolResult }         = require('./parser');
 const { ConversationManager }      = require('./prompt');
+const backup                       = require('./backup');
 
 // ─────────────────────────────────────────────
 //  Agent class
@@ -22,6 +23,10 @@ class DeepSeekAgent {
     this.conversation = new ConversationManager();
     this.options      = options;
     this._running     = false;
+    // Generate a unique session ID for this conversation
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    backup.setSessionId(sessionId);
+    logger.info(`Backup session ID: ${sessionId}`);
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -44,6 +49,14 @@ class DeepSeekAgent {
   async run(task) {
     this._running   = true;
     const maxIter   = config.MAX_ITERATIONS;
+
+    // ── Backup user task before starting ───────────────────────────────────
+    try {
+      await backup.backupUserPrompt(task);
+      logger.dim(`User prompt backed up to session: ${backup.getBackupDir()}`);
+    } catch (err) {
+      logger.warn(`Failed to backup user prompt: ${err.message}`);
+    }
 
     // ── 1. Snapshot working directory ──────────────────────────────────────
     const dirListing = this._getWorkingDirListing();
@@ -148,6 +161,19 @@ class DeepSeekAgent {
           await this._saveConversationLog(task, parsed.content);
         }
 
+        // Show backup summary
+        const backups = backup.listBackups();
+        if (backups.length > 0) {
+          logger.info(`\n📦 Backups created: ${backups.length} file(s) backed up to ${backup.getBackupDir()}`);
+          if (config.DEBUG) {
+            console.log('Backup manifest:');
+            backups.slice(-5).forEach(b => {
+              console.log(`  - ${b.operation}: ${b.filePath} → ${b.backupPath ? path.basename(b.backupPath) : '(new file)'}`);
+            });
+            if (backups.length > 5) console.log(`  ... and ${backups.length - 5} more`);
+          }
+        }
+
         this._running = false;
         return parsed.content;
       }
@@ -250,10 +276,10 @@ class DeepSeekAgent {
         `Date: ${new Date().toISOString()}`,
         `Task: ${task}`,
         `Working Dir: ${config.WORKING_DIR}`,
-        '═'.repeat(60),
+        '═'.repeat(40),
         this.conversation.exportLog(),
         '',
-        '═'.repeat(60),
+        '═'.repeat(40),
         'FINAL RESPONSE:',
         finalResponse,
       ].join('\n');

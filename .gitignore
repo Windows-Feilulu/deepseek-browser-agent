@@ -43,3 +43,6 @@ desktop.ini
 dist/
 build/
 out/
+/.vs
+/backups
+task.txt

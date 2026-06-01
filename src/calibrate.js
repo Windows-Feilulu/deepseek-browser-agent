@@ -108,7 +108,7 @@ async function calibrate() {
   });
 
   // ── Print report ──────────────────────────────────────────────────────────
-  const sep = '─'.repeat(60);
+  const sep = '─'.repeat(40);
 
   console.log(sep);
   console.log('URL   :', report.url);

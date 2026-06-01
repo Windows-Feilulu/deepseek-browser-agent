@@ -37,7 +37,10 @@ function parseArgs(argv) {
       case '--calibrate':   opts.calibrate   = true;    break;
       case '-h':
       case '--help':        opts.help        = true;    break;
-
+      case '-f':
+      case '--task-file':
+        opts.taskFile = args[++i];
+        break;
       case '-d':
       case '--dir':
         opts.workingDir = args[++i];
@@ -74,6 +77,7 @@ function printHelp() {
 
 \x1b[33mOPTIONS\x1b[0m
   -t, --task <task>    Task to run (can also be the last argument without a flag)
+  -f, --task-file <file>   Read task from file (overrides -t). Replaces \\r\\n with \\n.
   -i, --interactive    Interactive REPL mode — keep browser open, run multiple tasks
   -d, --dir <path>     Set working directory (default: current directory)
   --debug              Verbose debug output
@@ -85,6 +89,12 @@ function printHelp() {
 \x1b[33mEXAMPLES\x1b[0m
   # Run a single task
   node src/index.js "Create a REST API in Express with CRUD for users"
+
+  # Read task from a file
+  node src/index.js -f my_task.txt
+
+  # Combine with working directory
+  node src/index.js -d ~/projects/myapp -f task.md
 
   # Interactive mode (recommended)
   node src/index.js --interactive
@@ -111,6 +121,20 @@ function printHelp() {
     "STABLE_DELAY": 3000
   }
 `);
+}
+
+function readTaskFromFile(filePath) {
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Task file not found: ${resolved}`);
+  }
+  let content = fs.readFileSync(resolved, 'utf8');
+  // 将 \r\n 和 \n\r 统一替换为 \n
+  content = content.replace(/\r\n|\n\r/g, '\n');
+  if (!content.trim()) {
+    throw new Error(`Task file is empty: ${resolved}`);
+  }
+  return content;
 }
 
 // ─────────────────────────────────────────────
@@ -178,9 +202,40 @@ async function main() {
     logger.info('Done. Check the output above to update selectors in src/browser.js if needed.');
     await shutdown(0);
   }
+  // ── 处理任务文件（优先级高于普通任务）────────────────────────
+  let finalTask = opts.task;
+  if (opts.taskFile) {
+    if (opts.interactive) {
+      logger.warn('--task-file is ignored in interactive mode.\n');
+    } else {
+      try {
+        finalTask = readTaskFromFile(opts.taskFile);
+        logger.info(`Loaded task from file: ${opts.taskFile}`);
+        if (config.DEBUG) {
+          logger.debug(`Task content (first 200 chars): ${finalTask.slice(0, 200)}...`);
+        }
+      } catch (err) {
+        logger.error(err.message);
+        process.exit(1);
+      }
+    }
+  } else if (opts.task && opts.taskFile) {
+    logger.warn('Both --task and --task-file provided; --task-file takes precedence.');
+  }
+  
+  // ── 备份用户提示词（如果提供了任务）──────────────────────────────
+  if (finalTask && !opts.interactive) {
+    const backup = require('./backup');
+    try {
+      await backup.backupUserPrompt(finalTask);
+      logger.dim(`User prompt backed up to session: ${backup.getBackupDir()}`);
+    } catch (err) {
+      logger.warn(`Failed to backup user prompt: ${err.message}`);
+    }
+  }
 
-  // ── Validate we have a task or interactive mode ────────────────────────────
-  if (!opts.interactive && !opts.task) {
+  // ── 最终验证任务或交互模式 ────────────────────────────────────
+  if (!opts.interactive && !finalTask) {
     logger.warn('No task provided. Switching to interactive mode...\n');
     opts.interactive = true;
   }
@@ -199,7 +254,7 @@ async function main() {
     if (opts.interactive) {
       await agent.runInteractive();
     } else {
-      await agent.run(opts.task);
+      await agent.run(finalTask);
     }
   } catch (err) {
     logger.error(`Agent error: ${err.message}`);

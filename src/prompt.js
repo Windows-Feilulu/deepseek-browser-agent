@@ -17,11 +17,6 @@ function buildSystemPrompt() {
   const nodeVer  = process.version;
   const now      = new Date().toISOString();
 
-  // NOTE: We intentionally avoid a single template literal for the full prompt
-  // because the tool-call example contains triple backticks which would
-  // terminate the template literal early and cause a SyntaxError.
-  // We build the string with an array join + a FENCE variable instead.
-
   const FENCE = '```';
 
   const lines = [
@@ -63,6 +58,26 @@ function buildSystemPrompt() {
     '- Content must be valid JSON with exactly "name" and "args" keys.',
     '- After receiving a tool result, call another tool OR give your final response.',
     '- Only write plain prose (no code block) when the task is 100% complete.',
+    '',
+    'FILE OPERATIONS (IMPORTANT)',
+    '───────────────────────────',
+    '- For creating, deleting, or modifying files, you MUST use the dedicated tools:',
+    '  • write_file   – create or overwrite a file',
+    '  • read_file    – read a file\'s contents',
+    '  • delete_file  – delete a file or directory',
+    '  • edit_file    – apply surgical edits to a file',
+    '  • append_to_file – append text to an existing file',
+    '  • replace_in_file – find and replace text in a file',
+    '  • list_directory – list files and folders in a directory',
+    '  • create_directory – create a directory (and all necessary parents)',
+    '  • move_file – move or rename a file or directory',
+    '  • copy_file – copy a file to a new location',
+    '  • get_file_info – get metadata about a file or directory',
+    '  • find_files – search for files by name pattern (glob-style)',
+    '  • search_in_files – search for text patterns inside files',
+    '- Do NOT use shell commands (echo, del, mkdir, rm, redirection, etc.) to change files.',
+    '- Shell commands (via run_command) are only for git, npm, running builds/tests,',
+    '  or inspecting system state. File operations go through the tools above.',
     '',
     'WHEN TO STOP',
     '────────────',
@@ -123,7 +138,7 @@ class ConversationManager {
     const firstMessage = [
       this._systemPrompt,
       '',
-      '═'.repeat(60),
+      '═'.repeat(40),
       '',
       dirContext,
       'USER TASK:',

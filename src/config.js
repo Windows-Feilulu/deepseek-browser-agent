@@ -18,7 +18,7 @@ const defaults = {
   SEND_DELAY       : 400,
 
   // Agent
-  MAX_ITERATIONS   : 40,
+  MAX_ITERATIONS   : 60,
   WORKING_DIR      : process.cwd(),
 
   // Output

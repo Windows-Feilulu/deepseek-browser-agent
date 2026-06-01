@@ -564,16 +564,16 @@ class DeepSeekBrowser {
       };
     });
 
-    console.log('\n' + '═'.repeat(60));
+    console.log('\n' + '═'.repeat(40));
     console.log('  DOM DEBUG INFO');
-    console.log('═'.repeat(60));
+    console.log('═'.repeat(40));
     console.log('URL   :', info.url);
     console.log('Title :', info.title);
     console.log('\nInput elements:');
     info.inputs.forEach(i => console.log(' ', JSON.stringify(i)));
     console.log('\nMatching CSS classes (by frequency):');
     info.classes.forEach(([cls, count]) => console.log(`  ${String(count).padStart(3)}x  .${cls}`));
-    console.log('═'.repeat(60) + '\n');
+    console.log('═'.repeat(40) + '\n');
   }
 
   /** Take a screenshot (for debugging) */

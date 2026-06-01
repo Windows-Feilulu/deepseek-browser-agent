@@ -152,7 +152,7 @@ Drop `deepseek-agent.config.json` in your project root:
 | Setting | Default | Description |
 |---|---|---|
 | `HEADLESS` | `false` | Hide the browser window |
-| `MAX_ITERATIONS` | `40` | Max agent steps per task before stopping |
+| `MAX_ITERATIONS` | `60` | Max agent steps per task before stopping |
 | `RESPONSE_TIMEOUT` | `180000` | Max ms to wait for a response (3 min) |
 | `STABLE_DELAY` | `2500` | Ms of silence that means DeepSeek is done |
 | `SEND_DELAY` | `400` | Ms between typing and pressing Enter |
