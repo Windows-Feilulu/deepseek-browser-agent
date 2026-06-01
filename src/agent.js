@@ -164,7 +164,6 @@ class DeepSeekAgent {
         // Show backup summary
         const backups = backup.listBackups();
         if (backups.length > 0) {
-          logger.info(`\n📦 Backups created: ${backups.length} file(s) backed up to ${backup.getBackupDir()}`);
           if (config.DEBUG) {
             console.log('Backup manifest:');
             backups.slice(-5).forEach(b => {
