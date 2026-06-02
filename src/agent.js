@@ -107,6 +107,21 @@ class DeepSeekAgent {
 
         try {
           result  = await executeTool(parsed.name, parsed.args);
+          
+          // Check if this is an ask_user request (special marker)
+          if (result && typeof result === 'object' && result.__ask_user === true) {
+            // This is a user interaction request
+            logger.info(`\n🤖 AI asks: ${result.question}`);
+            
+            // Get user input
+            const userResponse = await this._promptUser(result.question, result.options);
+            
+            // Send user response back to AI as tool result
+            const feedbackMsg = this.conversation.addToolResult(parsed.name, userResponse, false);
+            await this.browser.sendMessage(feedbackMsg);
+            continue;
+          }
+          
           logger.toolResult(result);
         } catch (err) {
           result  = `Error: ${err.message}`;
@@ -243,6 +258,43 @@ class DeepSeekAgent {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  async _promptUser(question, options = []) {
+    const readline = require('readline');
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    // Display the question
+    console.log('\n' + '='.repeat(60));
+    console.log(`📝 ${question}`);
+    if (options && options.length > 0) {
+      console.log('\nOptions:');
+      options.forEach((opt, i) => {
+        console.log(`  ${i + 1}. ${opt}`);
+      });
+      console.log('\n(Enter the number or type your response)')
+    }
+    console.log('='.repeat(60));
+    
+    return new Promise((resolve) => {
+      rl.question('\nYour response: ', (answer) => {
+        rl.close();
+        
+        // Check if answer is a number and we have options
+        if (options && options.length > 0) {
+          const num = parseInt(answer, 10);
+          if (!isNaN(num) && num >= 1 && num <= options.length) {
+            resolve(options[num - 1]);
+            return;
+          }
+        }
+        
+        resolve(answer);
+      });
+    });
+  }
 
   _getWorkingDirListing() {
     try {

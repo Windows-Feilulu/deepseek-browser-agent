@@ -560,18 +560,11 @@ const TOOLS = {
       options: { type: 'array', required: false, description: 'Optional list of options for the user to choose from (e.g., ["Yes", "No", "Cancel"])' },
     },
     async execute({ question, options }) {
-      // This tool will be intercepted by the agent framework
-      // The framework will display the question to the user and wait for input
-      // The response will be passed back through the tool result
-      const prompt = options && options.length > 0
-        ? `${question}\n\nOptions: ${options.map((opt, i) => `${i+1}. ${opt}`).join(' | ')}`
-        : question;
-      
-      // Return a special marker that the framework will recognize
-      // The actual implementation will be in the agent's main loop
+      // Return a special marker that the agent loop will recognize
+      // The agent will display this to the user and wait for input
       return {
         __ask_user: true,
-        question: prompt,
+        question: question,
         options: options || []
       };
     },
