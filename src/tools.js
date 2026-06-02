@@ -413,7 +413,7 @@ const TOOLS = {
     },
     async execute({ pattern, directory = '.', exclude }) {
       const dir = resolve(directory);
-      let excludePattern = 'node_modules|\\.git|dist';
+      let excludePattern = 'node_modules|build|debug|release|backups|\\.git|dist';
       if (exclude) {
         excludePattern += `|${escapePS(exclude)}`;
       }
