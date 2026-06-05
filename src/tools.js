@@ -96,22 +96,20 @@ const TOOLS = {
 
       // Read with normalized LF line endings
       let content = readFileNormalized(abs);
+      const lines = content.split('\n');
+      const totalLines = lines.length;
 
       if (start_line != null || end_line != null) {
-        const lines = content.split('\n');
         const s = Math.max(0, (start_line || 1) - 1);
-        const e = end_line != null ? end_line : lines.length;
-        content = lines.slice(s, e).map((l, i) => `${s + i + 1}:${l}`).join('\n');
-        return `[${filePath} | lines ${s + 1}–${e}]\n${truncate(content)}`;
+        const e = end_line != null ? end_line : totalLines;
+        const sliced = lines.slice(s, e);
+        const numbered = sliced.map((l, i) => `${s + i + 1}:${l}`).join('\n');
+        return `[${filePath} | lines ${s + 1}–${e}]\n${truncate(numbered)}`;
       }
 
-      // Add line numbers for large files to help the AI reference lines
-      const lineCount = content.split('\n').length;
-      if (lineCount <= 300) {
-        const numbered = content.split('\n').map((l, i) => `${i + 1}:${l}`).join('\n');
-        return `[${filePath} | ${lineCount} lines]\n${numbered}`;
-      }
-      return `[${filePath} | ${lineCount} lines — use start_line/end_line to read sections]\n${truncate(content)}`;
+      // Always output line numbers for the whole file
+      const numbered = lines.map((l, i) => `${i + 1}:${l}`).join('\n');
+      return `[${filePath} | ${totalLines} lines]\n${truncate(numbered)}`;
     },
   },
 
